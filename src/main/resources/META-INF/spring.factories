@@ -1,0 +1,6 @@
+# Registers DotEnvPostProcessor so it runs before the Spring Environment is finalised.
+# This is the one config extension point that genuinely needs the old spring.factories
+# mechanism rather than a @Component: EnvironmentPostProcessor runs before component
+# scanning exists yet.
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.truesight.backend.config.DotEnvPostProcessor

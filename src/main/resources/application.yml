@@ -1,0 +1,111 @@
+# Base configuration, checked into git. Nothing secret lives here — secrets are
+# environment variables (see .env.example), referenced below with ${VAR:default}
+# syntax so the app still boots locally without a .env for anything that isn't
+# strictly required (e.g. you can run and browse the UI before wiring Gemini up).
+server:
+  port: 8085
+
+spring:
+  application:
+    name: truesight-backend
+
+  # --- Persistence ---------------------------------------------------------
+  # H2, file-based, because Docker is not available on this machine (see BUILD_PROMPT).
+  # The JDBC URL is the ONLY thing that changes to move to Postgres later: swap this
+  # block for spring.datasource.url=jdbc:postgresql://..., driver-class-name, and
+  # dialect, and everything above the JDBC layer (JPA entities, repositories,
+  # services) is unaffected. That is the whole point of going through JPA + Flyway
+  # instead of anything H2-specific.
+  datasource:
+    # AUTO_SERVER=TRUE (which would let the H2 console attach to a running app from a
+    # second JVM) is deliberately NOT set: this H2 version (2.3.x) rejects it combined
+    # with DB_CLOSE_ON_EXIT=FALSE as an unsupported feature. We don't need concurrent
+    # multi-JVM access for a single Spring Boot process anyway — the embedded H2
+    # console below runs in-process and works fine without it.
+    url: jdbc:h2:file:./data/truesight;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema. Hibernate must never auto-create or auto-alter
+      # tables, or the migration history stops being the source of truth.
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  # H2 web console, dev convenience only. Never enable this pattern against
+  # a real database in a deployed environment.
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  servlet:
+    multipart:
+      # AC 2.1: CSV upload capped at 5MB. A little headroom over the limit so we can
+      # return OUR "file too large" message instead of a raw container-level error.
+      max-file-size: 6MB
+      max-request-size: 6MB
+
+# --- Auth -------------------------------------------------------------------
+truesight:
+  jwt:
+    # Must be overridden via TRUESIGHT_JWT_SECRET in any environment that matters;
+    # the default here exists only so a fresh clone boots without a .env file.
+    secret: ${TRUESIGHT_JWT_SECRET:dev-only-insecure-secret-change-me-please-1234567890}
+    expiration-minutes: ${TRUESIGHT_JWT_EXPIRATION_MINUTES:120}
+
+  # --- LLM (Gemini) ----------------------------------------------------------
+  # The API key is read server-side only, from environment, and never exposed via
+  # any endpoint or UI field (Epic 1 note: "LLM API key held server-side in config,
+  # never editable from the UI" — this is the one place it is allowed to exist).
+  llm:
+    provider: gemini
+    api-key: ${GEMINI_API_KEY:}
+    model: ${GEMINI_MODEL:gemini-2.5-flash}
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
+    timeout-seconds: 30
+    max-retries: 1 # AC 5.1: "retried once, then marked Failed"
+
+  # --- SEC EDGAR ---------------------------------------------------------------
+  sec:
+    # SEC Fair Access policy requires a descriptive User-Agent with contact info;
+    # requests without one are throttled or blocked. This is a placeholder contact,
+    # not a secret, and is fine to commit.
+    user-agent: "TrueSight-Reference/0.1 (student-project; contact: ${TRUESIGHT_CONTACT_EMAIL:noreply@example.com})"
+    min-request-interval-ms: 150 # ~6.6 req/s, under SEC's 10 req/s ceiling
+    max-concurrent-requests: 4
+    cache-dir: ./cache/sec
+    ticker-index-url: https://www.sec.gov/files/company_tickers.json
+    submissions-base-url: https://data.sec.gov/submissions
+    archives-base-url: https://www.sec.gov/Archives/edgar/data
+
+  # --- News (Epic 7) -----------------------------------------------------------
+  news:
+    google-news-rss-base: https://news.google.com/rss/search
+    cache-dir: ./cache/news
+    relevance-threshold: 0.25 # AC 7.1: "threshold is documented" — this is that document
+
+  ingestion:
+    cache-dir: ./cache/analysis
+    max-parallel-holdings: 4
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  level:
+    com.truesight: INFO
+    org.flywaydb: INFO

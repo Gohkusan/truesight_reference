@@ -1,0 +1,11 @@
+# Normalise line endings: text files stored as LF in the repo, checked out with the
+# platform's native ending. Keeps this Windows-authored repo diff-clean if the team
+# clones on macOS/Linux later.
+* text=auto
+
+# Shell scripts must keep LF even on Windows checkout, or a Git-Bash/WSL run of mvnw
+# fails with a "bad interpreter" error from the CRLF.
+mvnw text eol=lf
+
+# Windows batch files must keep CRLF.
+*.cmd text eol=crlf
