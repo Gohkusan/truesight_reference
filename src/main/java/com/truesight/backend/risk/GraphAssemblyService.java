@@ -259,6 +259,20 @@ public class GraphAssemblyService {
 
     // ---- response mapping ---------------------------------------------------------
 
+    /**
+     * assemble + toResponse in ONE transaction. Callers outside a transaction (the
+     * controllers) must use this, not the two-step form: open-in-view is disabled in
+     * application.yml (deliberately — it hides N+1 problems), so lazy Company/Holding
+     * proxies inside the assembled graph are detached the moment assemble()'s
+     * transaction ends, and mapping them afterwards throws LazyInitializationException.
+     * Found by the first live call to /graph, not by the unit tests, which run inside
+     * a test transaction and never saw the boundary.
+     */
+    @Transactional(readOnly = true)
+    public GraphResponse buildResponse(Long portfolioId, Long userId, boolean includeRejected) {
+        return toResponse(assemble(portfolioId, userId, includeRejected));
+    }
+
     @Transactional(readOnly = true)
     public GraphResponse toResponse(AssembledGraph graph) {
         List<GraphNode> nodeDtos = new ArrayList<>();

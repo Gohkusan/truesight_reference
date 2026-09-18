@@ -56,8 +56,12 @@ public class RelationshipController {
         this.currentUser = currentUser;
     }
 
+    // @Transactional on these two handlers because toDetail walks lazy collections
+    // (evidence) after the service call returns; with open-in-view off (see
+    // application.yml) the controller must own the transaction that spans both.
     @GetMapping("/{relationshipId}")
     @Operation(summary = "Relationship detail with every source excerpt, confidence factors, and risk history")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public RelationshipDetailResponse detail(@PathVariable Long portfolioId, @PathVariable Long relationshipId) {
         portfolioService.getOwned(portfolioId, currentUser.id());
         EdgeModel edge = reviewService.getOwnedEdge(portfolioId, relationshipId, currentUser.id());
@@ -67,6 +71,7 @@ public class RelationshipController {
     @PutMapping("/{relationshipId}/review")
     @Operation(summary = "Confirm or reject a relationship (AC 5.4)",
             description = "Reversible: send PENDING to clear a previous judgement. Triggers a rescore.")
+    @org.springframework.transaction.annotation.Transactional
     public RelationshipDetailResponse review(@PathVariable Long portfolioId, @PathVariable Long relationshipId,
                                              @Valid @RequestBody ReviewRequest request) {
         portfolioService.getOwned(portfolioId, currentUser.id());

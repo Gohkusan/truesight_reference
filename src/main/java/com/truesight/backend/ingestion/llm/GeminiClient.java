@@ -178,7 +178,13 @@ public class GeminiClient {
         // original text, so truncation can only cause MISSED relationships (a false
         // negative), never a false positive that slips past verification.
         int maxChars = 60_000;
-        String truncatedText = filingText.length() > maxChars ? filingText.substring(0, maxChars) : filingText;
+        // Not a blind head-truncation: see FilingSectionSelector for why (the first
+        // real 10-K sent this way yielded nothing — the head is cover-page boilerplate).
+        // 20-F filers use Item 3.D / Item 4 instead of Item 1 / 1A; detect from the
+        // document's own header rather than threading the form type through the API.
+        String head = filingText.substring(0, Math.min(filingText.length(), 20_000)).toUpperCase();
+        boolean foreignPrivateIssuer = head.contains("FORM 20-F") || head.contains("ITEM 3.D");
+        String truncatedText = FilingSectionSelector.select(filingText, maxChars, foreignPrivateIssuer);
 
         String prompt = """
                 You are analysing an SEC filing for %s to identify its suppliers and customers.

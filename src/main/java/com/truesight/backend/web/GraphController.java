@@ -35,7 +35,6 @@ public class GraphController {
     public GraphResponse graph(@PathVariable Long portfolioId,
                                @RequestParam(name = "includeRejected", defaultValue = "false") boolean includeRejected) {
         portfolioService.getOwned(portfolioId, currentUser.id());
-        var assembled = graphAssemblyService.assemble(portfolioId, currentUser.id(), includeRejected);
-        return graphAssemblyService.toResponse(assembled);
+        return graphAssemblyService.buildResponse(portfolioId, currentUser.id(), includeRejected);
     }
 }
