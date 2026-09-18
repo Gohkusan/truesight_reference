@@ -56,6 +56,7 @@ public class PortfolioIngestionService {
     private final HoldingRepository holdingRepository;
     private final ProcessedInputRepository processedInputRepository;
     private final AnalysisProgressTracker progressTracker;
+    private final com.truesight.backend.risk.RiskScoringService riskScoringService;
 
     public PortfolioIngestionService(
             PortfolioCsvParser csvParser,
@@ -65,7 +66,8 @@ public class PortfolioIngestionService {
             GeminiExtractionService geminiExtractionService,
             HoldingRepository holdingRepository,
             ProcessedInputRepository processedInputRepository,
-            AnalysisProgressTracker progressTracker
+            AnalysisProgressTracker progressTracker,
+            com.truesight.backend.risk.RiskScoringService riskScoringService
     ) {
         this.csvParser = csvParser;
         this.companyResolutionService = companyResolutionService;
@@ -75,6 +77,7 @@ public class PortfolioIngestionService {
         this.holdingRepository = holdingRepository;
         this.processedInputRepository = processedInputRepository;
         this.progressTracker = progressTracker;
+        this.riskScoringService = riskScoringService;
     }
 
     // ============================================================================
@@ -162,6 +165,10 @@ public class PortfolioIngestionService {
         }
 
         portfolio.setLastAnalysedAt(java.time.Instant.now());
+        // Scores are derived from relationships, so they are (re)computed only after
+        // extraction, never during — a half-analysed portfolio would otherwise show
+        // scores computed against an incomplete graph.
+        riskScoringService.rescorePortfolio(portfolio.getId(), requestingUser.getId(), "Portfolio analysis");
         return holdings;
     }
 
@@ -195,6 +202,9 @@ public class PortfolioIngestionService {
         } finally {
             progressTracker.finish(portfolio.getId());
         }
+        portfolio.setLastAnalysedAt(java.time.Instant.now());
+        riskScoringService.rescorePortfolio(portfolio.getId(), requestingUser.getId(),
+                "Added holding " + company.getTicker());
         return Optional.of(holding);
     }
 

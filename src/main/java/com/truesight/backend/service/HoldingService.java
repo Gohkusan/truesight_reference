@@ -19,9 +19,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class HoldingService {
 
     private final HoldingRepository holdingRepository;
+    private final AlertService alertService;
 
-    public HoldingService(HoldingRepository holdingRepository) {
+    public HoldingService(HoldingRepository holdingRepository, AlertService alertService) {
         this.holdingRepository = holdingRepository;
+        this.alertService = alertService;
     }
 
     @Transactional(readOnly = true)
@@ -45,6 +47,10 @@ public class HoldingService {
     public void remove(Long holdingId, Long portfolioId, Long ownerId) {
         Holding holding = getOwned(holdingId, portfolioId, ownerId);
         holding.setRemoved(true);
+        // AC 2.4: "Alerts tied to the holding are archived, not deleted." Archiving is
+        // itself reversible (reopen), so undoRemove leaves the user able to restore
+        // both the holding and its alerts.
+        alertService.archiveForCompany(portfolioId, holding.getCompany().getId());
     }
 
     /** AC 2.4's undo: reverses remove() within the same session. Both are idempotent no-ops if already in that state. */

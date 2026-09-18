@@ -60,6 +60,75 @@ public class GeminiClient {
     }
 
     /**
+     * Epic 7: classify one news article's relevance and sentiment for a company.
+     * Same transport and schema-constrained output as extractRelationships; a much
+     * smaller prompt. Throws LlmUnavailableException/IOException exactly as the
+     * extraction call does, so callers reuse the same retry policy and banners.
+     */
+    public com.truesight.backend.ingestion.news.ArticleAnalysis analyzeArticle(String companyName, String title, String snippet)
+            throws IOException, InterruptedException {
+        if (!isConfigured()) {
+            throw new LlmUnavailableException(LlmUnavailableException.Kind.NOT_CONFIGURED, "Gemini API key is not configured");
+        }
+        String prompt = """
+                You are assessing whether a news item indicates a supply-chain disruption or risk event
+                affecting %s (a company held in, or supplying, an equity portfolio).
+
+                Headline: %s
+                Snippet: %s
+
+                Return:
+                - relevance: 0.0 to 1.0 — how directly this concerns %s's ability to produce, source, or deliver.
+                  0 if it is unrelated, about a different company, or generic market commentary.
+                - sentiment: -1.0 (severe disruption: halt, shortage, sanction, recall, fire, strike) to
+                  +1.0 (capacity expansion, resolved constraint). 0 for neutral.
+                - category: one of OPERATIONAL_SHUTDOWN, GEOPOLITICAL_EXPORT_CURB, COMPONENT_SHORTAGE,
+                  CAPACITY_EXPANSION, DEMAND_CATALYST, OTHER
+                - summary: one plain sentence stating what happened and why it matters for %s. No advice.
+                """.formatted(companyName, title, snippet == null ? "" : snippet, companyName, companyName);
+
+        var root = objectMapper.createObjectNode();
+        var parts = objectMapper.createArrayNode().add(objectMapper.createObjectNode().put("text", prompt));
+        root.set("contents", objectMapper.createArrayNode().add(objectMapper.createObjectNode().set("parts", parts)));
+        var gen = objectMapper.createObjectNode();
+        gen.put("responseMimeType", "application/json");
+        gen.put("temperature", 0.1);
+        var schema = objectMapper.createObjectNode();
+        schema.put("type", "OBJECT");
+        var props = objectMapper.createObjectNode();
+        props.set("relevance", objectMapper.createObjectNode().put("type", "NUMBER"));
+        props.set("sentiment", objectMapper.createObjectNode().put("type", "NUMBER"));
+        props.set("category", enumSchema("OPERATIONAL_SHUTDOWN", "GEOPOLITICAL_EXPORT_CURB", "COMPONENT_SHORTAGE",
+                "CAPACITY_EXPANSION", "DEMAND_CATALYST", "OTHER"));
+        props.set("summary", stringSchema(false));
+        schema.set("properties", props);
+        schema.set("required", objectMapper.createArrayNode().add("relevance").add("sentiment").add("category").add("summary"));
+        gen.set("responseSchema", schema);
+        root.set("generationConfig", gen);
+
+        String url = properties.llm().baseUrl() + "/models/" + properties.llm().model()
+                + ":generateContent?key=" + properties.llm().apiKey();
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url))
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(properties.llm().timeoutSeconds()))
+                .POST(HttpRequest.BodyPublishers.ofString(root.toString())).build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            log.warn("Gemini article analysis failed for {}: HTTP {}", companyName, response.statusCode());
+            throw LlmUnavailableException.fromHttp(response.statusCode(), response.body());
+        }
+        JsonNode body = objectMapper.readTree(response.body());
+        String text = body.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText(null);
+        if (text == null) {
+            throw new IOException("Gemini response candidate had no text content");
+        }
+        JsonNode a = objectMapper.readTree(text);
+        return new com.truesight.backend.ingestion.news.ArticleAnalysis(
+                a.path("relevance").asDouble(0), a.path("sentiment").asDouble(0),
+                a.path("category").asText("OTHER"), a.path("summary").asText(""));
+    }
+
+    /**
      * One call to Gemini asking it to extract supply-chain relationships from a
      * filing's text, plus the filer's own sector/country. Throws on any failure
      * (network error, non-200, malformed/schema-rejected JSON) — retry policy lives in

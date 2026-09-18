@@ -16,4 +16,7 @@ public interface RiskAssessmentRepository extends JpaRepository<RiskAssessment, 
     List<RiskAssessment> findByRelationshipIdOrderByAssessedAtAsc(Long relationshipId);
 
     List<RiskAssessment> findByHoldingIdOrderByAssessedAtAsc(Long holdingId);
+
+    /** AC 3.4: "changed risk scores since the previous login" — holding-level rows appended after that instant. */
+    long countByHolding_Portfolio_IdAndAssessedAtAfter(Long portfolioId, java.time.Instant since);
 }

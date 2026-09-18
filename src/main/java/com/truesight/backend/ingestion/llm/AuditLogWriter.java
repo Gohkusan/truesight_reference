@@ -39,12 +39,21 @@ public class AuditLogWriter {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void write(User user, Company target, FetchedFiling filing, String modelName, long startedAtMs,
                        boolean success, String outputSummary, String errorMessage) {
-        AuditLog entry = new AuditLog(user, AuditActionType.SEC_FILING_EXTRACTION, target.getName(), modelName);
-        entry.setInputReference("Filing accession " + filing.accessionNumber() + " (" + filing.sourceType() + ", " + filing.filingDate() + ")");
+        writeGeneric(user, AuditActionType.SEC_FILING_EXTRACTION, target.getName(), modelName,
+                "Filing accession " + filing.accessionNumber() + " (" + filing.sourceType() + ", " + filing.filingDate() + ")",
+                startedAtMs, success, outputSummary, errorMessage);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void writeGeneric(User user, AuditActionType type, String targetEntity, String modelName, String inputReference,
+                              long startedAtMs, boolean success, String outputSummary, String errorMessage) {
+        AuditLog entry = new AuditLog(user, type, targetEntity, modelName);
+        entry.setInputReference(inputReference);
         entry.setOutputSummary(outputSummary);
         entry.setLatencyMs(System.currentTimeMillis() - startedAtMs);
         entry.setSuccess(success);
-        entry.setErrorMessage(errorMessage);
+        entry.setErrorMessage(errorMessage == null ? null
+                : (errorMessage.length() > 2000 ? errorMessage.substring(0, 2000) : errorMessage));
         auditLogRepository.save(entry);
     }
 }

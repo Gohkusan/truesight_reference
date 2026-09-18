@@ -237,12 +237,20 @@ public class GeminiExtractionService {
                                       List<String> verifiedExcerpts, FetchedFiling filing) {
         Company counterparty = companyResolutionService.resolveByName(extractedRel.counterpartyName());
 
-        // "direction" in the extraction is relative to the FILER: SUPPLIER means the
-        // counterparty supplies the filer, i.e. the edge goes counterparty -> filer.
-        RelationshipType type = "CUSTOMER".equalsIgnoreCase(extractedRel.direction())
-                ? RelationshipType.CUSTOMER : RelationshipType.SUPPLIER;
-        Company fromCompany = (type == RelationshipType.SUPPLIER) ? counterparty : filerCompany;
-        Company toCompany = (type == RelationshipType.SUPPLIER) ? filerCompany : counterparty;
+        // Every stored edge points in the direction goods flow: supplier -> buyer.
+        // "direction" in the extraction is relative to the FILER, so:
+        //   SUPPLIER  (counterparty supplies the filer)   => counterparty -> filer
+        //   CUSTOMER  (counterparty buys from the filer)  => filer -> counterparty
+        // Both become RelationshipType.SUPPLIER rows. "Customer" is then a READ-TIME
+        // notion — any company downstream of a holding — rather than a second edge
+        // type with its own direction convention. One rule means graph traversal
+        // ("what is upstream of X?") is a single query in a single direction; an
+        // earlier version stored CUSTOMER edges with the opposite orientation and it
+        // was immediately unclear which way to walk them. See RelationshipType.
+        boolean counterpartyIsCustomer = "CUSTOMER".equalsIgnoreCase(extractedRel.direction());
+        RelationshipType type = RelationshipType.SUPPLIER;
+        Company fromCompany = counterpartyIsCustomer ? filerCompany : counterparty;
+        Company toCompany = counterpartyIsCustomer ? counterparty : filerCompany;
 
         if (fromCompany.getId() != null && fromCompany.getId().equals(toCompany.getId())) {
             // AC 4.1: "self-loops are dropped." A company cannot supply or be a
