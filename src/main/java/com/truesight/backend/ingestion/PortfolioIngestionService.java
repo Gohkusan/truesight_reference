@@ -57,6 +57,7 @@ public class PortfolioIngestionService {
     private final ProcessedInputRepository processedInputRepository;
     private final AnalysisProgressTracker progressTracker;
     private final com.truesight.backend.risk.RiskScoringService riskScoringService;
+    private final com.truesight.backend.repository.RelationshipRepository relationshipRepository;
 
     public PortfolioIngestionService(
             PortfolioCsvParser csvParser,
@@ -67,8 +68,10 @@ public class PortfolioIngestionService {
             HoldingRepository holdingRepository,
             ProcessedInputRepository processedInputRepository,
             AnalysisProgressTracker progressTracker,
-            com.truesight.backend.risk.RiskScoringService riskScoringService
+            com.truesight.backend.risk.RiskScoringService riskScoringService,
+            com.truesight.backend.repository.RelationshipRepository relationshipRepository
     ) {
+        this.relationshipRepository = relationshipRepository;
         this.csvParser = csvParser;
         this.companyResolutionService = companyResolutionService;
         this.tickerIndexService = tickerIndexService;
@@ -208,6 +211,113 @@ public class PortfolioIngestionService {
         return Optional.of(holding);
     }
 
+    public record RefreshOutcome(int holdingsChecked, int reanalysed, int unchanged, int failed,
+                                 int relationshipsMarkedNoLongerDisclosed, boolean cancelled) {
+    }
+
+    /**
+     * Epic 8: re-analyse only what changed. For each active holding, look up its
+     * primary filing again; if that accession number has already been processed,
+     * nothing is fetched and no LLM call is made (AC 8.1: "only changed inputs are
+     * re-analysed... this keeps LLM spend bounded"). If it is new, extract from it and
+     * then apply AC 5.3: any relationship into this holding whose evidence comes only
+     * from OLDER filings — i.e. the new filing did not re-mention it — is flagged
+     * noLongerDisclosed and drops out of scoring until the user confirms it.
+     *
+     * <p>Failure handling is the whole point of AC 8.1's last line ("a refresh that
+     * fails leaves the previous results in place and shows a banner"): a holding whose
+     * re-analysis fails keeps its previous COVERED status and relationships — its
+     * coverage is NOT flipped to FAILED, because the old analysis is still valid. The
+     * failure is recorded on the LLM health tracker (banner) and in the audit log.
+     */
+    @Transactional
+    public RefreshOutcome refreshChangedFilings(User requestingUser, Portfolio portfolio) {
+        List<Holding> holdings = holdingRepository.findActiveByPortfolioId(portfolio.getId());
+        int reanalysed = 0;
+        int unchanged = 0;
+        int failed = 0;
+        int flagged = 0;
+        boolean cancelled = false;
+
+        progressTracker.start(portfolio.getId(), holdings.size());
+        try {
+            for (Holding holding : holdings) {
+                if (progressTracker.isCancelRequested(portfolio.getId())) {
+                    cancelled = true;
+                    break;
+                }
+                Company company = holding.getCompany();
+                if (company.getCik() == null) {
+                    unchanged++;
+                    progressTracker.recordCompleted(portfolio.getId());
+                    continue;
+                }
+                try {
+                    List<SecFilingSummary> filings = secEdgarClient.listRecentFilings(company.getCik());
+                    SecFilingSummary primary = filings.isEmpty() ? null : SecEdgarClient.pickPrimaryFiling(filings);
+                    if (primary == null || processedInputRepository.existsByInputKey(primary.accessionNumber())) {
+                        unchanged++;
+                        progressTracker.recordCompleted(portfolio.getId());
+                        continue;
+                    }
+                    FetchedFiling filing = secEdgarClient.fetchFilingText(company.getCik(), primary);
+                    geminiExtractionService.extractAndPersist(requestingUser, company, filing);
+                    ProcessedInput processed = new ProcessedInput(ProcessedInputType.SEC_FILING, primary.accessionNumber());
+                    processedInputRepository.save(processed);
+                    flagged += flagNoLongerDisclosed(company, primary.accessionNumber());
+                    holding.setLastAnalysedAt(java.time.Instant.now());
+                    holding.setCoverageStatus(CoverageStatus.COVERED);
+                    holding.setFailureReason(null);
+                    reanalysed++;
+                    progressTracker.recordCompleted(portfolio.getId());
+                } catch (Exception e) {
+                    // Previous results stay; only the attempt is recorded (see Javadoc).
+                    failed++;
+                    log.warn("Refresh failed for {} — previous analysis kept: {}", company.getName(), describeFailure(e));
+                    progressTracker.recordFailed(portfolio.getId());
+                }
+            }
+        } finally {
+            progressTracker.finish(portfolio.getId());
+        }
+        if (reanalysed > 0) {
+            portfolio.setLastAnalysedAt(java.time.Instant.now());
+            riskScoringService.rescorePortfolio(portfolio.getId(), requestingUser.getId(),
+                    "Refresh: " + reanalysed + " new filing(s)");
+        }
+        return new RefreshOutcome(holdings.size(), reanalysed, unchanged, failed, flagged, cancelled);
+    }
+
+    /**
+     * AC 5.3: a relationship into {@code filer} with no evidence from the newest
+     * processed filing is "no longer disclosed". Only edges whose latest evidence is
+     * from a filing of the same form family are flagged — a 10-Q that omits a supplier
+     * named in the 10-K is normal (quarterlies are shorter), and must not flag it.
+     */
+    private int flagNoLongerDisclosed(Company filer, String newAccession) {
+        int flagged = 0;
+        var newEvidenceType = relationshipRepository.findByToCompanyId(filer.getId()).stream()
+                .flatMap(r -> r.getEvidence().stream())
+                .filter(ev -> newAccession.equals(ev.getAccessionNumber()))
+                .map(ev -> ev.getSourceType()).findFirst().orElse(null);
+        if (newEvidenceType == null) {
+            return 0; // the new filing yielded nothing at all; don't infer anything from silence
+        }
+        for (var r : relationshipRepository.findByToCompanyId(filer.getId())) {
+            boolean mentionedInNew = r.getEvidence().stream().anyMatch(ev -> newAccession.equals(ev.getAccessionNumber()));
+            boolean sameFamilyBefore = r.getEvidence().stream().anyMatch(ev -> ev.getSourceType() == newEvidenceType);
+            if (!mentionedInNew && sameFamilyBefore && !r.isNoLongerDisclosed()) {
+                r.setNoLongerDisclosed(true);
+                r.touch();
+                flagged++;
+            } else if (mentionedInNew && r.isNoLongerDisclosed()) {
+                r.setNoLongerDisclosed(false); // re-disclosed: clear the flag
+                r.touch();
+            }
+        }
+        return flagged;
+    }
+
     private Holding createOrUpdateHolding(Portfolio portfolio, ParsedCsvRow row) {
         Optional<Company> resolved = companyResolutionService.resolveByTicker(row.ticker());
         if (resolved.isEmpty()) {
@@ -257,7 +367,8 @@ public class PortfolioIngestionService {
                 return;
             }
 
-            SecFilingSummary mostRecent = filings.get(0);
+            // Annual report first, not simply the newest filing — see SecEdgarClient#pickPrimaryFiling.
+            SecFilingSummary mostRecent = SecEdgarClient.pickPrimaryFiling(filings);
             String processedInputKey = mostRecent.accessionNumber();
 
             if (processedInputRepository.existsByInputKey(processedInputKey)) {

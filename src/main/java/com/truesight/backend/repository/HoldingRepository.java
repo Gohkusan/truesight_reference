@@ -16,7 +16,13 @@ public interface HoldingRepository extends JpaRepository<Holding, Long> {
      * downstream of this repository simply never sees a removed holding, without
      * having to remember to filter it out itself.
      */
-    @Query("select h from Holding h where h.portfolio.id = :portfolioId and h.removed = false")
+    // "join fetch h.company": every consumer of a holdings list needs the company (name,
+    // ticker, CIK) immediately, and open-in-view is off, so a lazy proxy here would throw
+    // LazyInitializationException the moment a controller maps it after the service's
+    // transaction has closed — which is exactly what the first live call to /holdings
+    // did. Fetching eagerly in the query also avoids the N+1 selects the proxy would
+    // have caused inside a transaction.
+    @Query("select h from Holding h join fetch h.company where h.portfolio.id = :portfolioId and h.removed = false")
     List<Holding> findActiveByPortfolioId(@Param("portfolioId") Long portfolioId);
 
     /**

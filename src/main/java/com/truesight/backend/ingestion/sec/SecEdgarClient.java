@@ -98,6 +98,26 @@ public class SecEdgarClient {
     }
 
     /**
+     * Which filing to analyse for supplier relationships. NOT simply the newest: 8-Ks
+     * are filed for every earnings release and material event, so "newest relevant
+     * filing" is nearly always an 8-K press release with no supplier disclosure in it —
+     * the first live run analysed NVIDIA against a September 8-K and found nothing.
+     * Supplier disclosure lives in the annual report (10-K, or 20-F for foreign
+     * issuers), so that is preferred; a quarterly (10-Q/6-K) is the fallback; an 8-K is
+     * used only when nothing else exists. Within a class, newest wins.
+     */
+    public static SecFilingSummary pickPrimaryFiling(List<SecFilingSummary> newestFirst) {
+        for (List<String> tier : List.of(List.of("10-K", "20-F"), List.of("10-Q", "6-K"), List.of("8-K"))) {
+            for (SecFilingSummary f : newestFirst) {
+                if (tier.contains(f.formType())) {
+                    return f;
+                }
+            }
+        }
+        return newestFirst.isEmpty() ? null : newestFirst.get(0);
+    }
+
+    /**
      * Fetches and returns the full plain-text content of one filing document. This is
      * the text ExcerptVerificationService searches against — nothing is summarised or
      * truncated here, because a passage the LLM quotes from later in the document must
