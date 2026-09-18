@@ -1,0 +1,136 @@
+/*
+ * Design tokens. Every value any screen uses — colour, spacing, radius, type — is
+ * defined exactly once here and referenced everywhere else as var(--x), never as a
+ * literal. This file IS the design system; every other stylesheet in this app is an
+ * application of these tokens, not a second source of truth for what a colour means.
+ *
+ * The palette, spacing unit, and type stack below are lifted directly from
+ * prototype/graph-style-demo.html — that file is the approved design language for the
+ * graph canvas, and the build brief requires extending the same language to every
+ * other screen, not inventing a second one. What the prototype does NOT define
+ * (severity bands, a full type scale, semantic status colours) is added here,
+ * following the prototype's own restraint: desaturated, low-contrast, meaning-bearing
+ * rather than decorative.
+ */
+
+:root {
+  /* ---------- surfaces (from the prototype's :root) ---------- */
+  --bg: #131318;
+  --bg-2: #17171d;
+  --panel: #1a1a21;
+  --line: #26262f;
+  --line-2: #2f2f3a;
+
+  /* ---------- text ---------- */
+  --text: #dadadf;
+  --text-2: #9a9aa6;
+  --muted: #6b6b78;
+
+  /* ---------- brand / interactive ---------- */
+  --accent: #7c5cff;
+  --accent-hover: #8f72ff;
+
+  /* ---------- graph-specific encodings (from the prototype) ---------- */
+  --holding: #8b7cff;
+  --shared: #f87171;
+  --tier1: #fb923c;
+  --tier2: #fbbf24;
+  --customer: #34d399;
+  --edge: #3a3a46;
+  --edge-single: #c4564f;
+
+  /*
+   * ---------- severity bands ----------
+   * One meaning per colour, used identically everywhere severity appears: risk
+   * scores, alerts, coverage badges. UNKNOWN is deliberately its own colour (a
+   * desaturated violet-grey, not simply "no colour") — AC 6.1 requires "Unknown"
+   * to look different from "Low", never a gap silently rendered as calm/green.
+   * Each severity also gets a shape/icon glyph token (see components.css .badge)
+   * so the signal survives colour-blindness and greyscale printing (AC accessibility
+   * bar): colour is never the only encoding.
+   */
+  --severity-unknown: #8b8b9a;
+  --severity-low: #4ade80;
+  --severity-moderate: #fbbf24;
+  --severity-elevated: #fb923c;
+  --severity-critical: #f87171;
+
+  /* ---------- semantic status (distinct from severity: state, not risk) ---------- */
+  --status-success: #4ade80;
+  --status-info: #60a5fa;
+  --status-warning: #fbbf24;
+  --status-danger: #f87171;
+
+  /* ---------- confidence bands (Epic 5) ---------- */
+  --confidence-high: #4ade80;
+  --confidence-medium: #fbbf24;
+  --confidence-low: #f87171;
+
+  /* ---------- spacing rhythm ----------
+   * A single 4px unit, scaled. Every margin/padding/gap in the app should be one of
+   * these, so spacing reads as a system instead of accumulated one-off pixel values. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ---------- radius ----------
+   * The prototype's --r (6px) for panels/chrome. Buttons/inputs share it. The graph
+   * canvas itself uses its own harder-edged circle/rounded-square geometry (see
+   * graph.css) — 11.1's deliberate contrast between soft graph and square-ish chrome,
+   * except panels DO carry the small radius per that same section ("panels may carry
+   * a small radius ~6px where it reduces visual noise"). */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* ---------- type ----------
+   * One family for UI text, one for tabular/numeric data. The prototype's body font
+   * stack, extended with a monospace stack for anything numeric — this is a financial
+   * tool, and AC calls out tabular-nums explicitly so columns of numbers align. */
+  --font-ui: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 13.5px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --leading-tight: 1.3;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.7;
+
+  /* ---------- motion ----------
+   * Short and only ever in response to a user action (design principle 5 / AC 4.2's
+   * "eased rather than instant, because the animation communicates a state change the
+   * user initiated"). No token here is long enough to read as ambient. */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+
+  /* ---------- elevation ----------
+   * One shadow value, used for floating panels only (menus, modals, the graph's
+   * floating inspector) — never as decoration on static content. */
+  --shadow-panel: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --shadow-pill: 0 6px 20px rgba(0, 0, 0, 0.4);
+
+  /* ---------- layout ---------- */
+  --header-height: 56px;
+  --nav-width: 208px;
+  --content-max-width: 1400px;
+}

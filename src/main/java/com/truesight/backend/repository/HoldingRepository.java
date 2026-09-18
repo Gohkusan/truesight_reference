@@ -19,6 +19,15 @@ public interface HoldingRepository extends JpaRepository<Holding, Long> {
     @Query("select h from Holding h where h.portfolio.id = :portfolioId and h.removed = false")
     List<Holding> findActiveByPortfolioId(@Param("portfolioId") Long portfolioId);
 
+    /**
+     * Unlike findActiveByPortfolioId, includes soft-removed rows too (see
+     * Holding.removed's Javadoc). Only meant for portfolio deletion, where EVERY
+     * holding row under the portfolio — active or already removed — must go, since a
+     * soft-removed holding would otherwise become an orphaned foreign-key reference
+     * once the parent portfolio row is gone.
+     */
+    List<Holding> findByPortfolioId(Long portfolioId);
+
     @Query("""
             select h from Holding h
             where h.id = :id and h.portfolio.id = :portfolioId and h.portfolio.owner.id = :ownerId

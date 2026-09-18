@@ -1,0 +1,22 @@
+# Test profile: in-memory H2 (not file-based), fresh per test run. Flyway still runs
+# against it — the whole point of testing against Flyway-migrated schema rather than
+# Hibernate auto-DDL is that a passing test proves the migrations themselves are
+# correct, not just the entity mappings.
+spring:
+  datasource:
+    url: jdbc:h2:mem:truesight-test;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+truesight:
+  jwt:
+    secret: test-only-secret-do-not-use-elsewhere-0123456789abcdef
+    expiration-minutes: 120
+  llm:
+    api-key: ""
