@@ -60,6 +60,83 @@ public class GeminiClient {
     }
 
     /**
+     * AC 9.4: answer a plain-language question about the user's graph. The ONLY
+     * knowledge the model may use is {@code graphContext} (a text rendering of the
+     * user's own nodes, edges and excerpts, built by GraphQuestionService); the prompt
+     * instructs it to decline anything the context cannot answer. The schema forces a
+     * structured "answered / declined" flag plus the entity names cited, so the
+     * service can verify every citation actually exists in the context before showing
+     * the answer — the same discipline as the verbatim excerpt guard, applied to Q&A.
+     */
+    public com.truesight.backend.web.dto.GraphAnswer answerQuestion(String graphContext, String question)
+            throws IOException, InterruptedException {
+        if (!isConfigured()) {
+            throw new LlmUnavailableException(LlmUnavailableException.Kind.NOT_CONFIGURED, "Gemini API key is not configured");
+        }
+        String prompt = """
+                You answer questions about ONE user's supply-chain graph. The graph below is the ONLY
+                information you may use. Do not use outside knowledge about any company. If the
+                question cannot be answered from the graph — including questions about companies not
+                in it, price or investment questions, or anything unrelated — set answered=false and
+                explain briefly that it is outside this portfolio's data. Never give buy, sell, or
+                hedging advice.
+
+                When you answer, cite the exact company names from the graph you relied on in
+                citedCompanies, and quote relevant excerpts verbatim in citedExcerpts.
+
+                GRAPH:
+                %s
+
+                QUESTION: %s
+                """.formatted(graphContext, question);
+
+        var root = objectMapper.createObjectNode();
+        var parts = objectMapper.createArrayNode().add(objectMapper.createObjectNode().put("text", prompt));
+        root.set("contents", objectMapper.createArrayNode().add(objectMapper.createObjectNode().set("parts", parts)));
+        var gen = objectMapper.createObjectNode();
+        gen.put("responseMimeType", "application/json");
+        gen.put("temperature", 0.1);
+        var schema = objectMapper.createObjectNode();
+        schema.put("type", "OBJECT");
+        var props = objectMapper.createObjectNode();
+        props.set("answered", objectMapper.createObjectNode().put("type", "BOOLEAN"));
+        props.set("answer", stringSchema(false));
+        var strArr = objectMapper.createObjectNode();
+        strArr.put("type", "ARRAY");
+        strArr.set("items", stringSchema(false));
+        props.set("citedCompanies", strArr);
+        props.set("citedExcerpts", strArr.deepCopy());
+        schema.set("properties", props);
+        schema.set("required", objectMapper.createArrayNode().add("answered").add("answer").add("citedCompanies").add("citedExcerpts"));
+        gen.set("responseSchema", schema);
+        root.set("generationConfig", gen);
+
+        String url = properties.llm().baseUrl() + "/models/" + properties.llm().model()
+                + ":generateContent?key=" + properties.llm().apiKey();
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url))
+                .header("Content-Type", "application/json")
+                .timeout(Duration.ofSeconds(properties.llm().timeoutSeconds()))
+                .POST(HttpRequest.BodyPublishers.ofString(root.toString())).build();
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() != 200) {
+            log.warn("Gemini question failed: HTTP {}", response.statusCode());
+            throw LlmUnavailableException.fromHttp(response.statusCode(), response.body());
+        }
+        JsonNode body = objectMapper.readTree(response.body());
+        String text = body.path("candidates").path(0).path("content").path("parts").path(0).path("text").asText(null);
+        if (text == null) {
+            throw new IOException("Gemini response candidate had no text content");
+        }
+        JsonNode a = objectMapper.readTree(text);
+        List<String> companies = new ArrayList<>();
+        a.path("citedCompanies").forEach(n -> companies.add(n.asText()));
+        List<String> excerpts = new ArrayList<>();
+        a.path("citedExcerpts").forEach(n -> excerpts.add(n.asText()));
+        return new com.truesight.backend.web.dto.GraphAnswer(a.path("answered").asBoolean(false),
+                a.path("answer").asText(""), companies, excerpts, List.of());
+    }
+
+    /**
      * Epic 7: classify one news article's relevance and sentiment for a company.
      * Same transport and schema-constrained output as extractRelationships; a much
      * smaller prompt. Throws LlmUnavailableException/IOException exactly as the

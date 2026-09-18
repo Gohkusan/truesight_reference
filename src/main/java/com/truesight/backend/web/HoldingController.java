@@ -111,8 +111,19 @@ public class HoldingController {
                 .filter(row -> !excluded.contains(row.ticker()))
                 .toList();
 
-        List<Holding> holdings = ingestionService.applyAndAnalyse(user, portfolio, confirmedRows);
+        List<Holding> holdings = ingestionService.applyAndAnalyse(user, portfolio, confirmedRows, request.removeMissingOrDefault());
         return holdings.stream().map(HoldingResponse::from).toList();
+    }
+
+    @PostMapping("/upload/diff")
+    @Operation(summary = "Diff a re-upload against the current holdings before applying (AC 2.6)",
+            description = "Added, removed, and weight-changed holdings. Nothing is written. Apply with confirm and "
+                    + "removeMissing=true to replace the book; reviews, dismissals and overrides on remaining holdings are kept.")
+    public PortfolioIngestionService.UploadDiff diff(@PathVariable Long portfolioId, @Valid @RequestBody ConfirmUploadRequest request) {
+        Portfolio portfolio = portfolioService.getOwned(portfolioId, currentUser.id());
+        CsvParseResult parsed = csvParser.parse(request.csvContent());
+        Set<String> excluded = request.excludedTickers() == null ? Set.of() : Set.copyOf(request.excludedTickers());
+        return ingestionService.diff(portfolio, parsed.rows().stream().filter(r -> !excluded.contains(r.ticker())).toList());
     }
 
     @PostMapping("/add-by-ticker")

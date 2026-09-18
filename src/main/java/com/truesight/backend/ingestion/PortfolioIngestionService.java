@@ -142,8 +142,75 @@ public class PortfolioIngestionService {
      * the control flow (and therefore the cancel-checking logic) in one obviously
      * readable place for a reference implementation.
      */
+    // ---- AC 2.6: diff a re-upload against the current book, before applying --------
+
+    public record DiffRow(String ticker, String companyName, BigDecimal currentWeight, BigDecimal newWeight) {
+    }
+
+    public record UploadDiff(List<DiffRow> added, List<DiffRow> removed, List<DiffRow> weightChanged, List<DiffRow> unchanged) {
+    }
+
+    @Transactional(readOnly = true)
+    public UploadDiff diff(Portfolio portfolio, List<ParsedCsvRow> rows) {
+        var current = new java.util.LinkedHashMap<String, Holding>();
+        for (Holding h : holdingRepository.findActiveByPortfolioId(portfolio.getId())) {
+            if (h.getCompany().getTicker() != null) {
+                current.put(h.getCompany().getTicker().toUpperCase(), h);
+            }
+        }
+        List<DiffRow> added = new ArrayList<>();
+        List<DiffRow> changed = new ArrayList<>();
+        List<DiffRow> unchanged = new ArrayList<>();
+        var seen = new java.util.HashSet<String>();
+        for (ParsedCsvRow row : rows) {
+            String t = row.ticker().toUpperCase();
+            seen.add(t);
+            Holding h = current.get(t);
+            if (h == null) {
+                added.add(new DiffRow(t, row.companyName(), null, row.weightPercent()));
+            } else if (!java.util.Objects.equals(scale(h.getWeightPercent()), scale(row.weightPercent()))) {
+                changed.add(new DiffRow(t, h.getCompany().getName(), h.getWeightPercent(), row.weightPercent()));
+            } else {
+                unchanged.add(new DiffRow(t, h.getCompany().getName(), h.getWeightPercent(), row.weightPercent()));
+            }
+        }
+        List<DiffRow> removed = new ArrayList<>();
+        for (var en : current.entrySet()) {
+            if (!seen.contains(en.getKey())) {
+                removed.add(new DiffRow(en.getKey(), en.getValue().getCompany().getName(),
+                        en.getValue().getWeightPercent(), null));
+            }
+        }
+        return new UploadDiff(added, removed, changed, unchanged);
+    }
+
+    private static BigDecimal scale(BigDecimal v) {
+        return v == null ? null : v.stripTrailingZeros();
+    }
+
     @Transactional
     public List<Holding> applyAndAnalyse(User requestingUser, Portfolio portfolio, List<ParsedCsvRow> confirmedRows) {
+        return applyAndAnalyse(requestingUser, portfolio, confirmedRows, false);
+    }
+
+    @Transactional
+    public List<Holding> applyAndAnalyse(User requestingUser, Portfolio portfolio, List<ParsedCsvRow> confirmedRows,
+                                         boolean removeMissing) {
+        if (removeMissing) {
+            // AC 2.6 replace semantics: soft-remove (undoable) anything not in the new
+            // CSV. Holdings that ARE in it are updated in place below, so their reviews,
+            // dismissed alerts and relationship overrides survive.
+            var keep = new java.util.HashSet<String>();
+            for (ParsedCsvRow row : confirmedRows) {
+                keep.add(row.ticker().toUpperCase());
+            }
+            for (Holding h : holdingRepository.findActiveByPortfolioId(portfolio.getId())) {
+                String t = h.getCompany().getTicker();
+                if (t == null || !keep.contains(t.toUpperCase())) {
+                    h.setRemoved(true);
+                }
+            }
+        }
         List<Holding> holdings = new ArrayList<>();
         for (ParsedCsvRow row : confirmedRows) {
             holdings.add(createOrUpdateHolding(portfolio, row));
