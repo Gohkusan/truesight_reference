@@ -69,7 +69,8 @@ public class GeminiClient {
      */
     public ExtractionResult extractRelationships(String companyName, String filingText) throws IOException, InterruptedException {
         if (!isConfigured()) {
-            throw new IllegalStateException("Gemini API key is not configured");
+            throw new LlmUnavailableException(LlmUnavailableException.Kind.NOT_CONFIGURED,
+                    "Gemini API key is not configured");
         }
 
         String requestBody = buildRequestJson(companyName, filingText);
@@ -91,7 +92,7 @@ public class GeminiClient {
             // Google AI Studio's REST API expects it), and that must never reach a log
             // line, even at DEBUG level, even on failure.
             log.warn("Gemini request failed for {}: HTTP {}", companyName, response.statusCode());
-            throw new IOException("Gemini request failed: HTTP " + response.statusCode() + " — " + truncate(response.body(), 500));
+            throw LlmUnavailableException.fromHttp(response.statusCode(), response.body());
         }
 
         return parseResponse(response.body());

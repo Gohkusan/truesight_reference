@@ -71,7 +71,7 @@ truesight:
   llm:
     provider: gemini
     api-key: ${GEMINI_API_KEY:}
-    model: ${GEMINI_MODEL:gemini-2.5-flash}
+    model: ${GEMINI_MODEL:gemini-3.6-flash}
     base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
     timeout-seconds: 30
     max-retries: 1 # AC 5.1: "retried once, then marked Failed"

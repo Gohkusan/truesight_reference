@@ -1,7 +1,5 @@
 package com.truesight.backend.ingestion.llm;
 
-import com.truesight.backend.domain.AuditActionType;
-import com.truesight.backend.domain.AuditLog;
 import com.truesight.backend.domain.Company;
 import com.truesight.backend.domain.Criticality;
 import com.truesight.backend.domain.Evidence;
@@ -10,13 +8,13 @@ import com.truesight.backend.domain.RelationshipType;
 import com.truesight.backend.domain.User;
 import com.truesight.backend.ingestion.CompanyResolutionService;
 import com.truesight.backend.ingestion.sec.FetchedFiling;
-import com.truesight.backend.repository.AuditLogRepository;
 import com.truesight.backend.repository.RelationshipRepository;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -28,6 +26,24 @@ import org.springframework.transaction.annotation.Transactional;
  * is true because this method is the ONLY code path that creates Relationship/Evidence
  * rows from LLM output, and it never calls companyRepository.save/relationshipRepository
  * .save for a relationship whose excerpts all failed verification.
+ *
+ * <p><b>Transaction isolation, found the hard way:</b> both {@link #extractAndPersist}
+ * and the audit-log write inside {@link #callOnce} use {@code Propagation.REQUIRES_NEW}
+ * rather than the default REQUIRED. This was NOT the original design — it was added
+ * after a real end-to-end test against a live server surfaced
+ * {@code UnexpectedRollbackException}: when one holding's extraction fails inside
+ * {@code PortfolioIngestionService#applyAndAnalyse}'s outer {@code @Transactional}
+ * loop, the inner failed transaction (this class, under the default REQUIRED
+ * propagation) gets marked rollback-only, and that mark is PHYSICALLY THE SAME
+ * transaction as the outer loop's — so even though the outer loop's own try/catch
+ * correctly catches the exception and sets the holding to FAILED, that update (and
+ * every holding successfully analysed earlier in the same loop) gets silently
+ * discarded when the outer transaction tries to commit and finds itself poisoned.
+ * REQUIRES_NEW gives each holding's extraction (and each attempt's audit log entry)
+ * its own independent transaction, so a failure is contained to exactly the row it
+ * concerns — which is also the CORRECT semantic per AC 2.5 ("holdings already
+ * analysed remain usable"): one holding's failure must never be able to roll back
+ * another holding's success.
  */
 @Service
 public class GeminiExtractionService {
@@ -38,20 +54,23 @@ public class GeminiExtractionService {
     private final ExcerptVerificationService excerptVerificationService;
     private final CompanyResolutionService companyResolutionService;
     private final RelationshipRepository relationshipRepository;
-    private final AuditLogRepository auditLogRepository;
+    private final AuditLogWriter auditLogWriter;
+    private final LlmHealthTracker llmHealthTracker;
 
     public GeminiExtractionService(
             GeminiClient geminiClient,
             ExcerptVerificationService excerptVerificationService,
             CompanyResolutionService companyResolutionService,
             RelationshipRepository relationshipRepository,
-            AuditLogRepository auditLogRepository
+            AuditLogWriter auditLogWriter,
+            LlmHealthTracker llmHealthTracker
     ) {
         this.geminiClient = geminiClient;
         this.excerptVerificationService = excerptVerificationService;
         this.companyResolutionService = companyResolutionService;
         this.relationshipRepository = relationshipRepository;
-        this.auditLogRepository = auditLogRepository;
+        this.auditLogWriter = auditLogWriter;
+        this.llmHealthTracker = llmHealthTracker;
     }
 
     /**
@@ -71,9 +90,9 @@ public class GeminiExtractionService {
      * applies uniformly rather than trying to special-case which specific kind of
      * failure it was.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ExtractionOutcome extractAndPersist(User requestingUser, Company filerCompany, FetchedFiling filing) {
-        ExtractionResult result = callWithOneRetry(requestingUser, filerCompany, filing);
+        ExtractionResult result = callWithRetryPolicy(requestingUser, filerCompany, filing);
 
         applySectorAndCountryIfUnknown(filerCompany, result);
 
@@ -113,26 +132,70 @@ public class GeminiExtractionService {
         return new ExtractionOutcome(extracted, persisted, rejected);
     }
 
-    private ExtractionResult callWithOneRetry(User requestingUser, Company filerCompany, FetchedFiling filing) {
-        // Written as "try attempt 1, then on failure try attempt 2 and either return
-        // or throw immediately" rather than a bounded loop with a lastFailure variable
-        // set inside a catch block — that shape requires the reader (and the
-        // compiler's null-flow analysis) to trust that the loop body always executes
-        // and always assigns before the post-loop throw. This shape makes the AC 5.1
-        // policy ("one retry, total two attempts") visible directly in the control
-        // flow: there are exactly two call sites of extractRelationships below, one
-        // per attempt, nothing to count.
-        try {
-            return callOnce(requestingUser, filerCompany, filing, 1);
-        } catch (Exception firstFailure) {
-            log.info("Gemini extraction attempt 1 failed for {}, retrying once (AC 5.1 policy): {}",
-                    filerCompany.getName(), firstFailure.getMessage());
+    /** Base delay for exponential backoff: 1s, then 2s. Package-private so tests can zero it. */
+    long backoffBaseMs = 1000;
+
+    /**
+     * Two acceptance criteria govern retries, and they are about different failures:
+     * <ul>
+     *   <li>AC 5.1: "malformed output is retried once, then the holding is marked
+     *       Failed" — the model responded, but with something we couldn't parse.
+     *       One retry, no delay (nothing to wait for).</li>
+     *   <li>AC 9.2: "Retries use exponential backoff, at most 3 attempts" — the
+     *       service was rate-limited or overloaded. Backing off is the whole point.</li>
+     * </ul>
+     * And a third case neither AC spells out but both imply: a bad API key, an
+     * exhausted quota, or an unknown model name will not be fixed by trying again.
+     * Retrying those wastes time and, for quota, possibly more quota — so they fail
+     * on the first attempt. The policy is decided per failure KIND (see
+     * LlmUnavailableException.Kind#isTransient), not by counting exceptions blindly.
+     */
+    private ExtractionResult callWithRetryPolicy(User requestingUser, Company filerCompany, FetchedFiling filing) {
+        final int maxAttemptsTransient = 3;   // AC 9.2
+        final int maxAttemptsMalformed = 2;   // AC 5.1: one retry
+        Exception lastFailure = null;
+
+        for (int attempt = 1; attempt <= maxAttemptsTransient; attempt++) {
             try {
-                return callOnce(requestingUser, filerCompany, filing, 2);
-            } catch (Exception secondFailure) {
-                throw new RuntimeException(
-                        "Gemini extraction failed after 1 retry for " + filerCompany.getName(), secondFailure);
+                return callOnce(requestingUser, filerCompany, filing, attempt);
+            } catch (Exception e) {
+                lastFailure = e;
+                LlmUnavailableException llm = LlmUnavailableException.findIn(e);
+
+                if (llm != null && !llm.getKind().isTransient()) {
+                    log.info("Gemini extraction for {} failed with non-retryable {}; not retrying",
+                            filerCompany.getName(), llm.getKind());
+                    break;
+                }
+
+                boolean malformed = llm == null; // parse/schema failure rather than an HTTP-level one
+                int maxAttempts = malformed ? maxAttemptsMalformed : maxAttemptsTransient;
+                if (attempt >= maxAttempts) {
+                    break;
+                }
+
+                if (llm != null) {
+                    long delay = backoffBaseMs * (1L << (attempt - 1)); // 1s, 2s
+                    log.info("Gemini extraction attempt {} for {} failed ({}); backing off {}ms before retry",
+                            attempt, filerCompany.getName(), llm.getKind(), delay);
+                    sleepQuietly(delay);
+                } else {
+                    log.info("Gemini extraction attempt {} for {} returned malformed output; retrying once (AC 5.1)",
+                            attempt, filerCompany.getName());
+                }
             }
+        }
+        throw new RuntimeException("Gemini extraction failed for " + filerCompany.getName(), lastFailure);
+    }
+
+    private static void sleepQuietly(long ms) {
+        if (ms <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -141,31 +204,20 @@ public class GeminiExtractionService {
         long startedAt = System.currentTimeMillis();
         try {
             ExtractionResult result = geminiClient.extractRelationships(filerCompany.getName(), filing.fullText());
-            writeAuditLog(requestingUser, filerCompany, filing, startedAt, true,
+            auditLogWriter.write(requestingUser, filerCompany, filing, geminiClient.currentModelName(), startedAt, true,
                     result.relationships().size() + " relationship(s) extracted", null);
+            llmHealthTracker.recordSuccess();
             return result;
         } catch (Exception e) {
-            writeAuditLog(requestingUser, filerCompany, filing, startedAt, false, null, e.getMessage());
+            // Written through auditLogWriter's OWN transaction (REQUIRES_NEW), not
+            // inline here — see AuditLogWriter's Javadoc and this class's Javadoc for
+            // why a plain @Transactional on a private method would silently not apply,
+            // and why the failure entry must survive even when this attempt's own
+            // transaction is about to be rolled back.
+            auditLogWriter.write(requestingUser, filerCompany, filing, geminiClient.currentModelName(), startedAt, false, null, e.getMessage());
+            llmHealthTracker.recordFailure(e);
             throw e;
         }
-    }
-
-    private void writeAuditLog(User user, Company target, FetchedFiling filing, long startedAtMs,
-                                boolean success, String outputSummary, String errorMessage) {
-        AuditLog entry = new AuditLog(user, AuditActionType.SEC_FILING_EXTRACTION, target.getName(), geminiModelNameForAudit());
-        entry.setInputReference("Filing accession " + filing.accessionNumber() + " (" + filing.sourceType() + ", " + filing.filingDate() + ")");
-        entry.setOutputSummary(outputSummary);
-        entry.setLatencyMs(System.currentTimeMillis() - startedAtMs);
-        entry.setSuccess(success);
-        entry.setErrorMessage(errorMessage);
-        auditLogRepository.save(entry);
-    }
-
-    private String geminiModelNameForAudit() {
-        // A thin accessor rather than reaching into GeminiClient's internals from here —
-        // keeps GeminiExtractionService from needing to know GeminiClient's properties
-        // wiring, just that it can report which model it used.
-        return geminiClient.currentModelName();
     }
 
     private void applySectorAndCountryIfUnknown(Company company, ExtractionResult result) {

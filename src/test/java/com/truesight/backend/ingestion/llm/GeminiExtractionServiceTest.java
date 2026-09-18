@@ -14,7 +14,7 @@ import com.truesight.backend.domain.SourceType;
 import com.truesight.backend.domain.User;
 import com.truesight.backend.ingestion.CompanyResolutionService;
 import com.truesight.backend.ingestion.sec.FetchedFiling;
-import com.truesight.backend.repository.AuditLogRepository;
+
 import com.truesight.backend.repository.RelationshipRepository;
 import java.time.LocalDate;
 import java.util.List;
@@ -43,7 +43,9 @@ class GeminiExtractionServiceTest {
     @Mock
     private RelationshipRepository relationshipRepository;
     @Mock
-    private AuditLogRepository auditLogRepository;
+    private AuditLogWriter auditLogWriter;
+    @Mock
+    private LlmHealthTracker llmHealthTracker;
 
     private GeminiExtractionService service;
 
@@ -60,7 +62,8 @@ class GeminiExtractionServiceTest {
     void setUp() {
         service = new GeminiExtractionService(
                 geminiClient, excerptVerificationService, companyResolutionService,
-                relationshipRepository, auditLogRepository);
+                relationshipRepository, auditLogWriter, llmHealthTracker);
+        service.backoffBaseMs = 0; // no real sleeping in unit tests; the policy, not the delay, is under test
 
         user = new User("analyst@example.com", "hash");
         filerCompany = new Company("NVIDIA Corporation", "NVIDIA");
@@ -149,15 +152,54 @@ class GeminiExtractionServiceTest {
     }
 
     @Test
-    void retriesExactlyOnceOnFailureThenThrows() throws Exception {
+    void malformedOutputIsRetriedExactlyOnce() throws Exception {
+        // AC 5.1: a parse/schema failure (surfaces as a plain IOException from the
+        // client, not a typed LlmUnavailableException) gets one retry — two attempts total.
         when(geminiClient.extractRelationships(anyString(), anyString()))
-                .thenThrow(new java.io.IOException("simulated network failure"));
+                .thenThrow(new java.io.IOException("Gemini response had no candidates"));
 
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> service.extractAndPersist(user, filerCompany, filing));
 
-        // Exactly 2 calls to the client: the AC 5.1 policy is "retried once" — one
-        // original attempt plus one retry, never more.
+        verify(geminiClient, org.mockito.Mockito.times(2)).extractRelationships(anyString(), anyString());
+    }
+
+    @Test
+    void transientServiceFailureIsRetriedUpToThreeAttempts() throws Exception {
+        // AC 9.2: "exponential backoff, at most 3 attempts" for rate limits / overload.
+        when(geminiClient.extractRelationships(anyString(), anyString()))
+                .thenThrow(LlmUnavailableException.fromHttp(503, "{\"error\":{\"status\":\"UNAVAILABLE\"}}"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> service.extractAndPersist(user, filerCompany, filing));
+
+        verify(geminiClient, org.mockito.Mockito.times(3)).extractRelationships(anyString(), anyString());
+    }
+
+    @Test
+    void nonRetryableFailureFailsFastWithoutRetrying() throws Exception {
+        // An exhausted quota will not be fixed by trying again, and each retry could
+        // burn more of it. Exactly one attempt.
+        when(geminiClient.extractRelationships(anyString(), anyString()))
+                .thenThrow(LlmUnavailableException.fromHttp(429, "You exceeded your current quota"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> service.extractAndPersist(user, filerCompany, filing));
+
+        verify(geminiClient, org.mockito.Mockito.times(1)).extractRelationships(anyString(), anyString());
+    }
+
+    @Test
+    void transientFailureFollowedBySuccessRecovers() throws Exception {
+        // The retry policy must actually let a later attempt succeed, not just count.
+        when(geminiClient.extractRelationships(anyString(), anyString()))
+                .thenThrow(LlmUnavailableException.fromHttp(503, "overloaded"))
+                .thenReturn(new ExtractionResult(null, null, List.of()));
+        when(geminiClient.currentModelName()).thenReturn("gemini-3.6-flash");
+
+        GeminiExtractionService.ExtractionOutcome outcome = service.extractAndPersist(user, filerCompany, filing);
+
+        assertThat(outcome.relationshipsExtracted()).isZero();
         verify(geminiClient, org.mockito.Mockito.times(2)).extractRelationships(anyString(), anyString());
     }
 

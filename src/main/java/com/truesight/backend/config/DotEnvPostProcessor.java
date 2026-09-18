@@ -51,7 +51,11 @@ public class DotEnvPostProcessor implements EnvironmentPostProcessor {
         environment.getPropertySources().addLast(new MapPropertySource(SOURCE_NAME, values));
     }
 
-    private Map<String, Object> parse(Path envFile) {
+    // Package-private (not private) solely so DotEnvPostProcessorTest can exercise the
+    // parsing logic directly against an in-memory temp file, without needing to fake
+    // out Spring's ConfigurableEnvironment/SpringApplication for what is really a pure
+    // parsing concern.
+    Map<String, Object> parse(Path envFile) {
         Map<String, Object> values = new LinkedHashMap<>();
         List<String> lines;
         try {
@@ -79,6 +83,21 @@ public class DotEnvPostProcessor implements EnvironmentPostProcessor {
                     && ((value.startsWith("\"") && value.endsWith("\""))
                         || (value.startsWith("'") && value.endsWith("'")))) {
                 value = value.substring(1, value.length() - 1);
+            }
+            if (value.isEmpty()) {
+                // A blank RHS (e.g. "GEMINI_BASE_URL=" left empty in .env.example as a
+                // template placeholder) must be treated as "not set", not "explicitly
+                // set to empty string" — the whole point of application.yml's
+                // ${VAR:default} syntax is that an unset var falls through to the
+                // default, but Spring's property resolution only treats a MISSING key
+                // that way, not a present-but-empty one. Without this check, a user
+                // who copies .env.example and fills in only the fields they need
+                // (leaving optional ones blank, exactly as the template invites) gets
+                // empty strings silently overriding every default — caught during
+                // real end-to-end testing when a blank GEMINI_BASE_URL produced a
+                // malformed request URL ("URI with undefined scheme") instead of
+                // falling back to the real default.
+                continue;
             }
             values.put(key, value);
         }
