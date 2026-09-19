@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrueSight — Sign in</title>
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  /* Auth is the one screen without the header/nav layout: nothing to navigate to yet. */
+  .auth { min-height: 100vh; display: grid; place-items: center; padding: var(--space-6); }
+  .auth .panel { width: min(400px, 100%); }
+  .auth .brand { margin-bottom: var(--space-6); }
+  .auth form { display: flex; flex-direction: column; gap: var(--space-4); }
+  .auth .switch { text-align: center; color: var(--text-2); font-size: var(--text-sm); margin-top: var(--space-4); }
+</style>
+</head>
+<body>
+<main class="auth">
+  <div class="panel">
+    <div class="bd">
+      <div class="brand"><span class="dot"></span>TrueSight</div>
+      <h1 id="title">Sign in</h1>
+      <p class="muted small" id="sub" style="margin:4px 0 var(--space-5)">Supply-chain exposure for your equity holdings.</p>
+
+      <div id="formError" class="banner danger" style="display:none"><span class="glyph">!</span><span class="msg" id="formErrorMsg"></span></div>
+
+      <form id="form" novalidate>
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="username" required>
+          <span class="error" id="emailErr"></span>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8">
+          <span class="help" id="pwHelp" style="display:none">At least 8 characters.</span>
+          <span class="error" id="passwordErr"></span>
+        </div>
+        <div id="registerFields" style="display:none" class="stack">
+          <div class="field"><label for="displayName">Name (optional)</label><input id="displayName" type="text" autocomplete="name"></div>
+          <div class="field"><label for="firm">Firm (optional)</label><input id="firm" type="text" autocomplete="organization"></div>
+        </div>
+        <button class="btn primary" id="submit" type="submit">Sign in</button>
+      </form>
+      <div class="switch"><span id="switchText">No account?</span> <a href="#" id="switch">Create one</a></div>
+    </div>
+  </div>
+</main>
+<script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
+<script>
+(() => {
+  if (Api.token()) { location.href = '/'; return; }
+  let mode = 'login';
+  const $ = UI.el;
+  function setMode(m) {
+    mode = m;
+    $('title').textContent = m === 'login' ? 'Sign in' : 'Create your account';
+    $('submit').textContent = m === 'login' ? 'Sign in' : 'Create account';
+    $('registerFields').style.display = m === 'login' ? 'none' : '';
+    $('pwHelp').style.display = m === 'login' ? 'none' : '';
+    $('switchText').textContent = m === 'login' ? 'No account?' : 'Already registered?';
+    $('switch').textContent = m === 'login' ? 'Create one' : 'Sign in';
+    $('password').autocomplete = m === 'login' ? 'current-password' : 'new-password';
+    clearErrors();
+  }
+  function clearErrors() {
+    $('formError').style.display = 'none';
+    ['email', 'password'].forEach(f => { $(f + 'Err').textContent = ''; $(f).removeAttribute('aria-invalid'); });
+  }
+  function fieldError(f, msg) { $(f + 'Err').textContent = msg; $(f).setAttribute('aria-invalid', 'true'); }
+  $('switch').onclick = (e) => { e.preventDefault(); setMode(mode === 'login' ? 'register' : 'login'); };
+
+  $('form').onsubmit = async (e) => {
+    e.preventDefault(); clearErrors();
+    const email = $('email').value.trim(), password = $('password').value;
+    // AC 1.1 inline validation before the round trip; the server validates again.
+    let bad = false;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { fieldError('email', 'Enter a valid email address.'); bad = true; }
+    if (mode === 'register' && password.length < 8) { fieldError('password', 'Password must be at least 8 characters.'); bad = true; }
+    if (mode === 'login' && !password) { fieldError('password', 'Enter your password.'); bad = true; }
+    if (bad) return;
+    $('submit').disabled = true;
+    try {
+      const auth = mode === 'login'
+        ? await Api.auth.login(email, password)
+        : await Api.auth.register({ email, password, displayName: $('displayName').value.trim() || null, firm: $('firm').value.trim() || null });
+      Api.setSession(auth);
+      location.href = '/';
+    } catch (err) {
+      if (err.fieldErrors) Object.entries(err.fieldErrors).forEach(([f, m]) => $(f + 'Err') && fieldError(f, m));
+      else { $('formErrorMsg').textContent = err.message || 'Something went wrong.'; $('formError').style.display = ''; }
+    } finally { $('submit').disabled = false; }
+  };
+})();
+</script>
+</body>
+</html>

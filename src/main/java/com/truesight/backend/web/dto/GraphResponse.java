@@ -28,6 +28,8 @@ public record GraphResponse(
 
     public record GraphNode(
             Long id,
+            /** The Holding row id when kind == HOLDING (for links to the risks/portfolio screens); null otherwise. */
+            Long holdingId,
             String name,
             String ticker,
             NodeKind kind,

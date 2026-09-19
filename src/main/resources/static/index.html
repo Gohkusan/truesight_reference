@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrueSight</title>
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/graph.css">
+</head>
+<body>
+<div class="shell">
+  <header class="header">
+    <a class="brand" href="#/dashboard"><span class="dot"></span>TrueSight</a>
+    <div class="portfolio-switch">
+      <label class="sr-only" for="portfolioSelect">Active portfolio</label>
+      <select id="portfolioSelect" aria-label="Active portfolio" style="width:auto;min-width:180px"></select>
+      <button class="btn ghost sm" id="managePortfolios" title="Create, rename or delete portfolios">Manage</button>
+    </div>
+    <span class="spacer"></span>
+    <span id="llmStatus" class="badge" title="AI service status"></span>
+    <span id="userLabel" class="muted small"></span>
+    <button class="btn ghost sm" id="logout">Sign out</button>
+  </header>
+  <div class="body">
+    <nav class="nav" aria-label="Main">
+      <a href="#/dashboard" data-route="dashboard">Dashboard</a>
+      <a href="#/portfolio" data-route="portfolio">Portfolio</a>
+      <a href="#/network" data-route="network">Network</a>
+      <a href="#/risks" data-route="risks">Risks</a>
+      <a href="#/alerts" data-route="alerts">Alerts</a>
+      <div class="section eyebrow" style="padding:0 var(--space-3)">Analysis</div>
+      <a href="#/simulate" data-route="simulate">Simulate</a>
+      <a href="#/ask" data-route="ask">Ask</a>
+      <a href="#/recommendations" data-route="recommendations">To investigate</a>
+      <div class="section eyebrow" style="padding:0 var(--space-3)">Account</div>
+      <a href="#/settings" data-route="settings">Settings</a>
+      <a href="#/audit" data-route="audit">AI audit trail</a>
+    </nav>
+    <main class="content">
+      <div id="banners"></div>
+      <div id="view"></div>
+    </main>
+  </div>
+</div>
+<script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/pages/dashboard.js"></script>
+<script src="/js/pages/portfolio.js"></script>
+<script src="/js/pages/risks.js"></script>
+<script src="/js/pages/alerts.js"></script>
+<script src="/js/pages/settings.js"></script>
+<script src="/js/pages/audit.js"></script>
+<script src="/js/pages/recommendations.js"></script>
+<script src="/js/pages/simulate.js"></script>
+<script src="/js/pages/ask.js"></script>
+<script src="/js/graph.js"></script>
+<script src="/js/pages/network.js"></script>
+<script>App.start();</script>
+</body>
+</html>

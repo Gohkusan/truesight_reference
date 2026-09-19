@@ -280,7 +280,7 @@ public class GraphAssemblyService {
             Company c = n.company;
             NodeKind kind = n.isHolding() ? NodeKind.HOLDING : (n.tier < 0 ? NodeKind.CUSTOMER : NodeKind.SUPPLIER);
             nodeDtos.add(new GraphNode(
-                    c.getId(), c.getName(), c.getTicker(), kind, n.tier,
+                    c.getId(), n.isHolding() ? n.holding.getId() : null, c.getName(), c.getTicker(), kind, n.tier,
                     n.isHolding() ? n.holding.getWeightPercent() : null,
                     n.dependantHoldingCompanyIds.size(),
                     n.dependantWeight,

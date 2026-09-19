@@ -278,6 +278,44 @@ public class PortfolioIngestionService {
         return Optional.of(holding);
     }
 
+    public record ExpandOutcome(boolean analysed, boolean cached, String message) {
+    }
+
+    /**
+     * AC 4.8: "expand a supplier to reveal tier-2 dependencies... Results are cached so
+     * a second expansion is instant." Analyses a supplier company's own primary filing
+     * (it must have a CIK) exactly as a holding would be, then rescores. The cache is
+     * ProcessedInput keyed by accession number: a second call finds the filing already
+     * processed and returns immediately without SEC or LLM calls.
+     */
+    @Transactional
+    public ExpandOutcome expandSupplier(User requestingUser, Portfolio portfolio, Company company) {
+        if (company.getCik() == null) {
+            return new ExpandOutcome(false, false, company.getName() + " has no SEC filings, so its own suppliers cannot be extracted.");
+        }
+        try {
+            List<SecFilingSummary> filings = secEdgarClient.listRecentFilings(company.getCik());
+            if (filings.isEmpty()) {
+                company.setHasNoSecFilings(true);
+                return new ExpandOutcome(false, false, "SEC EDGAR has no relevant filings for " + company.getName() + ".");
+            }
+            SecFilingSummary primary = SecEdgarClient.pickPrimaryFiling(filings);
+            if (processedInputRepository.existsByInputKey(primary.accessionNumber())) {
+                return new ExpandOutcome(false, true, company.getName() + " was already analysed (filing " + primary.accessionNumber() + "); showing cached results.");
+            }
+            FetchedFiling filing = secEdgarClient.fetchFilingText(company.getCik(), primary);
+            GeminiExtractionService.ExtractionOutcome out = geminiExtractionService.extractAndPersist(requestingUser, company, filing);
+            ProcessedInput processed = new ProcessedInput(ProcessedInputType.SEC_FILING, primary.accessionNumber());
+            processed.setRelationshipsFound(out.relationshipsPersisted());
+            processedInputRepository.save(processed);
+            riskScoringService.rescorePortfolio(portfolio.getId(), requestingUser.getId(), "Expanded " + company.getName());
+            return new ExpandOutcome(true, false, out.relationshipsPersisted() + " verified relationship(s) found for " + company.getName()
+                    + (out.excerptsRejected() > 0 ? " (" + out.excerptsRejected() + " excerpt(s) failed verification and were discarded)" : "") + ".");
+        } catch (Exception e) {
+            throw new RuntimeException(describeFailure(e), e);
+        }
+    }
+
     public record RefreshOutcome(int holdingsChecked, int reanalysed, int unchanged, int failed,
                                  int relationshipsMarkedNoLongerDisclosed, boolean cancelled) {
     }

@@ -1,0 +1,60 @@
+/*
+ * Network screen. The canvas language is the approved prototype's (graph-style-demo.html):
+ * floating panels over a dark stage, square-ish chrome, soft node geometry. Only values
+ * from tokens.css are used.
+ */
+#stage { position: relative; width: 100%; height: 100%; background: radial-gradient(1300px 900px at 50% 45%, var(--bg-2) 0%, var(--bg) 72%); overflow: hidden; }
+#stage canvas { display: block; width: 100%; height: 100%; }
+.float {
+  position: absolute; background: rgba(26, 26, 33, 0.93); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-panel);
+}
+#controls { right: 14px; top: 14px; width: 232px; overflow: hidden; max-height: calc(100% - 28px); overflow-y: auto; }
+.grp { border-bottom: 1px solid var(--line); }
+.grp:last-child { border-bottom: 0; }
+.grp > summary { list-style: none; cursor: pointer; padding: 9px 12px; display: flex; align-items: center; gap: 7px; font-size: var(--text-sm); color: var(--text-2); user-select: none; }
+.grp > summary::-webkit-details-marker { display: none; }
+.grp > summary:hover { color: var(--text); }
+.grp > summary::before { content: ''; width: 0; height: 0; border: 4px solid transparent; border-left-color: var(--muted); transition: transform var(--duration-fast) var(--ease); margin-left: 1px; }
+.grp[open] > summary::before { transform: rotate(90deg) translateX(-1px); }
+.grp .gbody { padding: 2px 12px 12px; }
+.item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: var(--text-sm); color: var(--text-2); }
+.item:hover { color: var(--text); }
+.item .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.item .dot.sq { border-radius: 2px; }
+.item .key { margin-left: auto; font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.item label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+#inspector { left: 14px; top: 14px; width: 330px; max-height: calc(100% - 28px); overflow-y: auto; display: none; }
+#inspector .ihd { padding: 14px 15px 12px; border-bottom: 1px solid var(--line); }
+#inspector h1 { font-size: 16px; font-weight: var(--weight-semibold); letter-spacing: -0.01em; margin-bottom: 6px; }
+#inspector .ibd { padding: 12px 15px; }
+#inspector .sub { font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--muted); font-weight: var(--weight-semibold); margin: 14px 0 7px; }
+.link { display: flex; align-items: center; gap: 8px; padding: 5px 7px; margin: 0 -7px; border-radius: 4px; cursor: pointer; font-size: var(--text-sm); color: var(--text-2); }
+.link:hover { background: var(--bg-2); color: var(--text); }
+.link .tag { margin-left: auto; font-size: 10px; color: var(--muted); }
+.link .tag.s { color: var(--edge-single); }
+.link .tag.rej { text-decoration: line-through; }
+
+#shared { right: 14px; bottom: 14px; width: 262px; overflow: hidden; }
+#shared .shd { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: var(--text-sm); color: var(--text-2); display: flex; align-items: center; gap: 7px; }
+#shared .shd b { color: var(--text); font-weight: var(--weight-semibold); }
+.srow { display: flex; align-items: center; gap: 8px; padding: 7px 12px; cursor: pointer; font-size: var(--text-sm); border-bottom: 1px solid rgba(38, 38, 47, 0.5); }
+.srow:last-child { border-bottom: 0; }
+.srow:hover { background: var(--bg-2); }
+.srow .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .ct { font-size: 10.5px; font-weight: var(--weight-semibold); color: #fff; background: var(--shared); border-radius: var(--radius-pill); padding: 1px 6px; font-variant-numeric: tabular-nums; }
+.srow .wt { font-size: var(--text-xs); color: var(--muted); width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+.srow.none { color: var(--muted); cursor: default; }
+
+#toolbar { left: 50%; transform: translateX(-50%); top: 14px; display: flex; gap: 6px; padding: 6px; align-items: center; }
+#toolbar input[type="search"] { width: 220px; padding: 6px 10px; }
+#esc { position: absolute; left: 50%; transform: translateX(-50%); bottom: 16px; display: none; border-radius: var(--radius-pill); }
+#hint { position: absolute; left: 14px; bottom: 14px; font-size: var(--text-xs); color: var(--muted); pointer-events: none; transition: opacity var(--duration-slow); }
+#simBanner { position: absolute; left: 50%; transform: translateX(-50%); top: 60px; display: none; }
+#graphEmpty { position: absolute; inset: 0; display: grid; place-items: center; }
+#leftList { left: 14px; top: 14px; width: 260px; max-height: calc(100% - 28px); overflow-y: auto; }
+#leftList .lrow { padding: 7px 12px; border-bottom: 1px solid rgba(38, 38, 47, 0.5); font-size: var(--text-sm); cursor: pointer; }
+#leftList .lrow:hover { background: var(--bg-2); }
+#leftList .lrow .sub { color: var(--muted); font-size: var(--text-xs); }
+#leftList details .lrow { padding-left: 24px; }
